@@ -1,0 +1,443 @@
+import { parseArgs } from "node:util";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import { lookupSshConfig } from "../utils/ssh-config-parser.js";
+/**
+ * Command line argument parser class
+ */
+export class CommandLineParser {
+    static DEFAULT_TRANSPORT_MODE = "exec";
+    static DEFAULT_SHELL_READY_TIMEOUT_MS = 10000;
+    static parseBoolean(value) {
+        if (value === undefined) {
+            return undefined;
+        }
+        if (typeof value === "boolean") {
+            return value;
+        }
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === "true") {
+                return true;
+            }
+            if (normalized === "false") {
+                return false;
+            }
+        }
+        return Boolean(value);
+    }
+    /**
+     * Parse host-key verification mode. Only the literal "off" disables it -
+     * anything else (including absent) is the fail-closed default.
+     */
+    static parseHostKeyVerification(value) {
+        if (value === undefined || value === null || value === "") {
+            return "known_hosts";
+        }
+        const normalized = String(value).trim().toLowerCase();
+        if (normalized === "off") {
+            return "off";
+        }
+        if (normalized === "known_hosts" || normalized === "known-hosts") {
+            return "known_hosts";
+        }
+        throw new Error(`hostKeyVerification must be "known_hosts" or "off", got: ${String(value)}`);
+    }
+    static parseTransportMode(value) {
+        if (value === undefined || value === null || value === "") {
+            return undefined;
+        }
+        if (value === "exec" || value === "shell") {
+            return value;
+        }
+        throw new Error(`transportMode must be either 'exec' or 'shell', got: ${String(value)}`);
+    }
+    static parseTimeout(value, fieldName) {
+        if (value === undefined || value === null || value === "") {
+            return undefined;
+        }
+        const parsed = typeof value === "number" ? value : parseInt(String(value), 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            throw new Error(`${fieldName} must be a positive number, got: ${String(value)}`);
+        }
+        return parsed;
+    }
+    static parseMaxOutputBytes(value) {
+        if (value === undefined || value === null || value === "") {
+            return undefined;
+        }
+        const parsed = typeof value === "number" ? value : Number(String(value));
+        if (!Number.isSafeInteger(parsed) || parsed < 0) {
+            throw new Error(`maxOutputBytes must be a non-negative integer, got: ${String(value)}`);
+        }
+        return parsed;
+    }
+    /**
+     * Parse command line arguments
+     */
+    static parseArgs() {
+        const { values, positionals } = parseArgs({
+            args: process.argv.slice(2),
+            options: {
+                "config-file": { type: "string" },
+                "ssh-config-file": { type: "string" },
+                ssh: { type: "string", multiple: true },
+                // Compatible with single connection legacy parameters
+                host: { type: "string", short: "h" },
+                port: { type: "string", short: "p" },
+                username: { type: "string", short: "u" },
+                password: { type: "string", short: "w" },
+                privateKey: { type: "string", short: "k" },
+                passphrase: { type: "string", short: "P" },
+                agent: { type: "string", short: "a" },
+                whitelist: { type: "string", short: "W" },
+                blacklist: { type: "string", short: "B" },
+                proxy: { type: "string" },
+                socksProxy: { type: "string", short: "s" },
+                "allowed-local-paths": { type: "string" },
+                "allowed-remote-paths": { type: "string" },
+                "transport-mode": { type: "string" },
+                "shell-ready-timeout": { type: "string" },
+                "command-template": { type: "string" },
+                pty: { type: "string" },
+                "try-keyboard": { type: "boolean" },
+                "host-key-verification": { type: "string" },
+                "known-hosts-file": { type: "string" },
+                "pre-connect": { type: "boolean" },
+            },
+            allowPositionals: true,
+        });
+        const configMap = {};
+        // Priority 1: Load from config file if specified
+        if (values["config-file"]) {
+            const configFilePath = path.resolve(values["config-file"]);
+            if (!fs.existsSync(configFilePath)) {
+                throw new Error(`Config file not found: ${configFilePath}`);
+            }
+            try {
+                const configContent = fs.readFileSync(configFilePath, "utf-8");
+                const fileConfig = JSON.parse(configContent);
+                // Support both array format and object format
+                if (Array.isArray(fileConfig)) {
+                    // Array format: [{name: "dev", host: "...", ...}, ...]
+                    for (const config of fileConfig) {
+                        if (!config.name || !config.host || !config.port || !config.username) {
+                            throw new Error("Each config in array must include name, host, port, username");
+                        }
+                        configMap[config.name] = this.normalizeConfig(config);
+                    }
+                }
+                else if (typeof fileConfig === "object" && fileConfig !== null) {
+                    // Object format: {"dev": {host: "...", ...}, "prod": {...}}
+                    for (const [name, config] of Object.entries(fileConfig)) {
+                        const normalizedConfig = this.normalizeConfig(config);
+                        normalizedConfig.name = name;
+                        configMap[name] = normalizedConfig;
+                    }
+                }
+                else {
+                    throw new Error("Config file must contain an array or object of SSH configurations");
+                }
+            }
+            catch (err) {
+                if (err instanceof SyntaxError) {
+                    throw new Error(`Invalid JSON in config file: ${err.message}`);
+                }
+                throw err;
+            }
+        }
+        // Priority 2: Parse --ssh parameters (only if no config file was loaded)
+        if (Object.keys(configMap).length === 0) {
+            const sshParams = Array.isArray(values.ssh)
+                ? values.ssh
+                : values.ssh
+                    ? [values.ssh]
+                    : [];
+            for (const sshStr of sshParams) {
+                let conf;
+                // Try to parse as JSON first
+                if (sshStr.trim().startsWith("{")) {
+                    try {
+                        const jsonConfig = JSON.parse(sshStr);
+                        conf = this.normalizeConfig(jsonConfig);
+                        if (!conf.name) {
+                            throw new Error("JSON config must include 'name' field");
+                        }
+                    }
+                    catch (err) {
+                        throw new Error(`Invalid JSON format in --ssh parameter: ${err.message}`);
+                    }
+                }
+                else {
+                    // Fallback to legacy comma-separated format for backward compatibility
+                    conf = this.parseLegacySshFormat(sshStr);
+                }
+                if (!conf.name || !conf.host || !conf.port || !conf.username) {
+                    throw new Error("Each --ssh must include name, host, port, username");
+                }
+                configMap[conf.name] = conf;
+            }
+        }
+        // Priority 3: Compatible with single connection legacy parameters
+        if (Object.keys(configMap).length === 0) {
+            const host = values.host || positionals[0];
+            // 尝试从 SSH config 读取配置
+            let sshConfigEntry = null;
+            if (host) {
+                try {
+                    sshConfigEntry = lookupSshConfig(host, values["ssh-config-file"]);
+                }
+                catch (err) {
+                    // 显式指定配置文件但读取失败时抛错
+                    throw err;
+                }
+            }
+            const portStr = values.port || positionals[1] || sshConfigEntry?.port?.toString() || "22";
+            const username = values.username || positionals[2] || sshConfigEntry?.user;
+            const password = values.password || positionals[3];
+            // 私钥来源：命令行参数 > SSH config 的 IdentityFile
+            const privateKey = values.privateKey || sshConfigEntry?.identityFile;
+            const passphrase = values.passphrase || process.env.SSH_MCP_PASSPHRASE;
+            const resolvedAgent = values.agent !== undefined
+                ? values.agent
+                : !password && !privateKey
+                    ? findDefaultAgent()
+                    : undefined;
+            // OpenSSH 风格回退：SSH config 命中了主机别名，但没有提供任何认证信息（无 IdentityFile / password / agent）时，模仿 ssh 客户端自动尝试 ~/.ssh 下的默认身份文件（id_rsa、id_ecdsa、id_ed25519 等）
+            const defaultPrivateKey = !privateKey && !password && !resolvedAgent && sshConfigEntry
+                ? findDefaultIdentityFile()
+                : undefined;
+            const effectivePrivateKey = privateKey || defaultPrivateKey;
+            const whitelist = values.whitelist;
+            const blacklist = values.blacklist;
+            const allowedLocalPaths = values["allowed-local-paths"];
+            const allowedRemotePaths = values["allowed-remote-paths"];
+            const commandTemplate = values["command-template"];
+            const pty = this.parseBoolean(values.pty);
+            const tryKeyboard = values["try-keyboard"];
+            const hostKeyVerification = values["host-key-verification"];
+            const knownHostsFile = values["known-hosts-file"];
+            // 实际连接地址：优先使用 SSH config 的 HostName
+            const actualHost = sshConfigEntry?.hostName || host;
+            if (!actualHost || !portStr || !username || (!password && !effectivePrivateKey && !resolvedAgent)) {
+                throw new Error("Missing required parameters, need to provide host, port, username and password, private key or agent");
+            }
+            const port = parseInt(portStr, 10);
+            if (isNaN(port)) {
+                throw new Error("Port must be a valid number");
+            }
+            configMap["default"] = this.normalizeConfig({
+                name: "default",
+                host: actualHost,
+                port,
+                username,
+                password,
+                privateKey: effectivePrivateKey,
+                passphrase,
+                agent: resolvedAgent,
+                proxy: values.proxy,
+                socksProxy: values.socksProxy,
+                pty,
+                tryKeyboard: tryKeyboard !== undefined ? tryKeyboard : undefined,
+                transportMode: values["transport-mode"],
+                hostKeyVerification,
+                knownHostsFile,
+                shellReadyTimeoutMs: values["shell-ready-timeout"],
+                commandTemplate,
+                commandWhitelist: whitelist
+                    ? whitelist
+                        .split(",")
+                        .map((pattern) => pattern.trim())
+                        .filter(Boolean)
+                    : undefined,
+                commandBlacklist: blacklist
+                    ? blacklist
+                        .split(",")
+                        .map((pattern) => pattern.trim())
+                        .filter(Boolean)
+                    : undefined,
+                allowedLocalPaths: allowedLocalPaths
+                    ? allowedLocalPaths
+                        .split(",")
+                        .map((allowedPath) => allowedPath.trim())
+                        .filter(Boolean)
+                    : undefined,
+                allowedRemotePaths: allowedRemotePaths
+                    ? allowedRemotePaths
+                        .split(",")
+                        .map((allowedPath) => allowedPath.trim())
+                        .filter(Boolean)
+                    : undefined,
+            });
+        }
+        return {
+            configs: configMap,
+            preConnect: values["pre-connect"] === true,
+        };
+    }
+    /**
+     * Parse legacy comma-separated format: name=dev,host=1.2.3.4,port=22,user=alice,password=xxx
+     * @private
+     */
+    static parseLegacySshFormat(sshStr) {
+        const conf = {};
+        const parts = sshStr.split(",");
+        for (const part of parts) {
+            // Only split on the first '=' to handle values containing '='
+            const equalIndex = part.indexOf("=");
+            if (equalIndex > 0) {
+                const k = part.substring(0, equalIndex).trim();
+                const v = part.substring(equalIndex + 1).trim();
+                if (k && v) {
+                    conf[k] = v;
+                }
+            }
+        }
+        const port = parseInt(conf.port, 10);
+        if (isNaN(port)) {
+            throw new Error(`Port for connection ${conf.name || "unknown"} must be a valid number`);
+        }
+        return this.normalizeConfig(conf);
+    }
+    /**
+     * Normalize SSH config object to ensure proper types and structure
+     * @private
+     */
+    static normalizeConfig(config) {
+        const port = typeof config.port === "number"
+            ? config.port
+            : parseInt(config.port, 10);
+        if (isNaN(port)) {
+            throw new Error(`Port must be a valid number, got: ${config.port}`);
+        }
+        return {
+            name: config.name,
+            host: config.host,
+            port,
+            username: config.username || config.user,
+            password: config.password,
+            privateKey: config.privateKey
+                ? this.normalizeLocalPath(String(config.privateKey))
+                : undefined,
+            passphrase: config.passphrase || process.env.SSH_MCP_PASSPHRASE,
+            agent: config.agent,
+            algorithms: config.algorithms,
+            hostKeyVerification: this.parseHostKeyVerification(config.hostKeyVerification),
+            knownHostsFile: typeof config.knownHostsFile === "string" && config.knownHostsFile.length > 0
+                ? this.normalizeLocalPath(config.knownHostsFile)
+                : undefined,
+            proxy: config.proxy,
+            socksProxy: config.socksProxy,
+            pty: this.parseBoolean(config.pty),
+            tryKeyboard: this.parseBoolean(config.tryKeyboard),
+            transportMode: this.parseTransportMode(config.transportMode) ||
+                this.DEFAULT_TRANSPORT_MODE,
+            shellReadyTimeoutMs: this.parseTimeout(config.shellReadyTimeoutMs, "shellReadyTimeoutMs") || this.DEFAULT_SHELL_READY_TIMEOUT_MS,
+            shellCommandTimeoutMs: this.parseTimeout(config.shellCommandTimeoutMs, "shellCommandTimeoutMs"),
+            commandTimeoutMs: this.parseTimeout(config.commandTimeoutMs, "commandTimeoutMs"),
+            connectionTimeoutMs: this.parseTimeout(config.connectionTimeoutMs, "connectionTimeoutMs"),
+            sftpTimeoutMs: this.parseTimeout(config.sftpTimeoutMs, "sftpTimeoutMs"),
+            maxOutputBytes: this.parseMaxOutputBytes(config.maxOutputBytes),
+            keepaliveIntervalMs: this.parseTimeout(config.keepaliveIntervalMs, "keepaliveIntervalMs"),
+            keepaliveCountMax: this.parseTimeout(config.keepaliveCountMax, "keepaliveCountMax"),
+            commandWhitelist: Array.isArray(config.commandWhitelist)
+                ? config.commandWhitelist
+                : config.whitelist
+                    ? typeof config.whitelist === "string"
+                        ? config.whitelist.split("|").map((s) => s.trim()).filter(Boolean)
+                        : config.whitelist
+                    : undefined,
+            commandBlacklist: Array.isArray(config.commandBlacklist)
+                ? config.commandBlacklist
+                : config.blacklist
+                    ? typeof config.blacklist === "string"
+                        ? config.blacklist.split("|").map((s) => s.trim()).filter(Boolean)
+                        : config.blacklist
+                    : undefined,
+            allowedLocalPaths: Array.isArray(config.allowedLocalPaths)
+                ? config.allowedLocalPaths
+                    .map((allowedPath) => this.normalizeLocalPath(String(allowedPath)))
+                    .filter(Boolean)
+                : typeof config.allowedLocalPaths === "string"
+                    ? config.allowedLocalPaths
+                        .split("|")
+                        .map((allowedPath) => this.normalizeLocalPath(allowedPath.trim()))
+                        .filter(Boolean)
+                    : undefined,
+            allowedRemotePaths: Array.isArray(config.allowedRemotePaths)
+                ? config.allowedRemotePaths
+                    .map((allowedPath) => this.normalizeRemotePath(String(allowedPath)))
+                : typeof config.allowedRemotePaths === "string"
+                    ? config.allowedRemotePaths
+                        .split("|")
+                        .map((allowedPath) => this.normalizeRemotePath(allowedPath.trim()))
+                        .filter(Boolean)
+                    : undefined,
+            commandTemplate: this.parseCommandTemplate(config.commandTemplate),
+        };
+    }
+    static parseCommandTemplate(value) {
+        if (value === undefined || value === null || value === "") {
+            return undefined;
+        }
+        const template = String(value);
+        if (!template.includes("<command>") && !template.includes("<quotedCommand>")) {
+            throw new Error(`commandTemplate must contain '<command>' or '<quotedCommand>' placeholder, got: ${template}`);
+        }
+        return template;
+    }
+    static normalizeLocalPath(localPath) {
+        return path.resolve(this.expandHomePath(localPath));
+    }
+    static expandHomePath(localPath) {
+        if (localPath === "~") {
+            return os.homedir();
+        }
+        if (localPath.startsWith("~/")) {
+            return path.join(os.homedir(), localPath.slice(2));
+        }
+        return localPath;
+    }
+    static normalizeRemotePath(remotePath) {
+        if (!remotePath) {
+            return "";
+        }
+        if (!path.posix.isAbsolute(remotePath)) {
+            throw new Error(`allowedRemotePaths entries must be absolute POSIX paths, got: ${remotePath}`);
+        }
+        const normalized = path.posix.normalize(remotePath);
+        if (normalized.length > 1 && normalized.endsWith("/")) {
+            return normalized.slice(0, -1);
+        }
+        return normalized;
+    }
+}
+/**
+ * 模仿 OpenSSH 的行为：当用户未显式指定私钥、密码或 agent 时，按惯例依次尝试 ~/.ssh 下的默认身份文件（id_rsa、id_ecdsa、id_ed25519、id_xmss、id_dsa），返回第一个存在的公钥对应的私钥路径，否则返回undefined。
+ */
+function findDefaultIdentityFile() {
+    const sshDir = path.join(os.homedir(), ".ssh");
+    const defaultNames = ["id_rsa", "id_ecdsa", "id_ed25519", "id_xmss", "id_dsa"];
+    for (const name of defaultNames) {
+        const candidate = path.join(sshDir, name);
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+/**
+ * 在未显式指定认证方式时寻找默认的 SSH agent：
+ * - 各平台都优先使用 SSH_AUTH_SOCK 环境变量
+ * - Windows 上额外检查 OpenSSH Authentication Agent 的命名管道
+ */
+function findDefaultAgent() {
+    if (process.env.SSH_AUTH_SOCK) {
+        return process.env.SSH_AUTH_SOCK;
+    }
+    if (process.platform === "win32" && fs.existsSync("\\\\.\\pipe\\openssh-ssh-agent")) {
+        return "\\\\.\\pipe\\openssh-ssh-agent";
+    }
+    return undefined;
+}

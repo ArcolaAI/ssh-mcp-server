@@ -1,0 +1,47 @@
+# build/ is COMMITTED on this fork: the Arcola estate installs the package from
+# git (workstation/package.json in arcola-ai-platform) with npm scripts
+# disabled, so nothing can compile it at install time. A committed artefact is
+# only trustworthy while it equals its source, so this workflow recompiles src/
+# with the locked toolchain and REFUSES any difference. It also runs the test
+# suite. Required by the repository ruleset on main.
+#
+# Third-party actions are pinned to full commit SHAs (ISMS-INC-001).
+name: build-matches-source
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-matches-source:
+    runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_IGNORE_SCRIPTS: "true"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Install (locked, scripts off)
+        run: npm ci --no-audit --no-fund
+      - name: Recompile src/ and require it to equal the committed build/
+        run: |
+          set -u
+          rm -rf build
+          npx tsc
+          if ! git diff --exit-code --stat -- build/; then
+            echo "::error::build/ does not equal a fresh compile of src/ - rebuild (npx tsc) and commit the result"
+            exit 1
+          fi
+          untracked="$(git ls-files --others --exclude-standard -- build/)"
+          if [ -n "$untracked" ]; then
+            echo "::error::compiled files missing from the committed build/: $untracked"
+            exit 1
+          fi
+          echo "build/ equals a fresh compile of src/ ($(git ls-files build/ | wc -l) files)"
+      - name: Tests
+        run: node --test test/*.test.js

@@ -18,6 +18,16 @@ English Document | [中文文档](README.md)
 
 </div>
 
+## ArcolaAI fork
+
+This repository is the Arcola estate's fork of [classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server), pinned at upstream `v1.9.2` (`bd9d3196`) plus the patches below. It is the ONLY install source for the estate's `ssh-*` MCP servers (`arcola-ai-platform/workstation/package.json`, installed by `install-global-mcp.py`); the npm registry package is no longer used, so its update channel cannot reach the estate.
+
+- **Versioning:** `<upstream>-arcolaai.<n>`; the package name is unchanged so the installed bin stays `ssh-mcp-server`.
+- **`build/` is committed.** The estate installs from git with npm scripts disabled, so nothing compiles at install time. `.github/workflows/build-matches-source.yml` recompiles `src/` on every push and pull request and fails if the committed `build/` differs; rebuild with `npx tsc` and commit the result whenever `src/` changes. `.gitattributes` forces LF so a Windows checkout compiles byte-identically.
+- **Tests:** `node --test test/*.test.js` (or `npm test`, which builds first). 179 pass, 2 skipped, at the source switch.
+- **Patches carried:** host-key verification against OpenSSH `known_hosts`, on by default and fail-closed (`#1`); this fork's packaging (`#2`).
+- **Upstream releases** surface as a Renovate pull request in `arcola-ai-platform` (the registry version is watched there); cherry-pick onto this fork, rebuild, bump `-arcolaai.<n>`, and re-pin the commit SHA in `workstation/package.json`.
+
 ## 📝 Project Overview
 
 ssh-mcp-server is a bridging tool that enables AI assistants and other applications supporting the MCP protocol to execute remote SSH commands through a standardized interface. This allows AI assistants to safely operate remote servers, execute commands, and retrieve results without directly exposing SSH credentials to AI models.

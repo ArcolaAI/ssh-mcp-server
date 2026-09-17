@@ -1,9 +1,10 @@
 # 依赖目录
 node_modules/
-package-lock.json
 
-# 构建输出
-build/
+# 构建输出 - build/ IS COMMITTED on the ArcolaAI fork (see README_EN.md "ArcolaAI fork"):
+# the estate installs it from git with npm scripts disabled, so no prepare step
+# can build it at install time. CI (.github/workflows/build-matches-source.yml)
+# refuses a build/ that does not equal a fresh compile of src/.
 
 # 操作系统文件
 .DS_Store
