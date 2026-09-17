@@ -1,33 +1,54 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "description": [
-    "ArcolaAI fork of ssh-mcp-server. Renovate is driven by the self-hosted run in ArcolaAI/arcola-ai-platform (config.js lists this repo); it covers the four direct dependencies the fork still takes from the registry, which the fork pin in the estate's workstation manifest does not. Same 7-day release-age floor as every estate repo (the unpublish / malicious-publish window); merging is attended, never automerged. A bump changes package.json/package-lock.json only; build/ is unaffected, and the build-matches-source check proves it on the PR. Upstream (classfang/ssh-mcp-server) releases are watched separately from arcola-ai-platform workstation/upstream-watch.json."
+  "extends": [
+    "config:recommended"
   ],
-  "enabledManagers": ["npm", "github-actions"],
+  "description": [
+    "ArcolaAI fork of ssh-mcp-server. Renovate is driven by the self-hosted run in ArcolaAI/arcola-ai-platform (config.js lists this repo); it covers the four direct dependencies the fork still takes from the registry, which the fork pin in the estate's workstation manifest does not. Same 7-day release-age floor as every estate repo (the unpublish / malicious-publish window); merging is attended, never automerged. A bump changes package.json/package-lock.json only; build/ is unaffected, and the build-matches-source check proves it on the PR. Upstream (classfang/ssh-mcp-server) releases are watched separately from arcola-ai-platform workstation/upstream-watch.json.",
+    "MEASURED on the first live run (arcola-ai-platform run 35215789140, 2026-09-17T11:48Z): this repo has ISSUES DISABLED, so Renovate logs 'Cannot ensure issue because issues are disabled' and NO dependency dashboard can exist here. A dependencyDashboardApproval gate would therefore hold a major for ever with no surface to approve it on - the R13 dead-channel failure in its worst form, a channel that does not exist. So no rule here gates on the dashboard, and dependencyDashboard is off explicitly rather than failing every run. Majors arrive as their own labelled PR; the guard is the 7-day floor, the PR's own CI (build-matches-source + CodeQL) and an attended merge. The same run also warns 'Cannot access vulnerability alerts' HERE ONLY (the platform repo reads them fine, and a user token reads this repo's alerts fine), so the App's token cannot see Dependabot alerts on this repo: osvVulnerabilityAlerts is therefore set, which uses Renovate's own OSV datasource and needs no GitHub alert permission."
+  ],
+  "enabledManagers": [
+    "npm",
+    "github-actions"
+  ],
   "minimumReleaseAge": "7 days",
   "automerge": false,
-  "labels": ["dependencies"],
-  "lockFileMaintenance": { "enabled": true, "schedule": ["before 9am on Monday"] },
+  "labels": [
+    "dependencies"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 9am on Monday"
+    ]
+  },
   "packageRules": [
     {
       "description": "Pin GitHub Actions to commit SHAs (ISMS-INC-001).",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "pinDigests": true,
       "minimumReleaseAge": "7 days"
     },
     {
-      "description": "Majors get their own PR; the fork is cherry-pick territory, so a major on ssh2 or the MCP SDK is reviewed against upstream before it moves.",
-      "matchUpdateTypes": ["major"],
-      "dependencyDashboardApproval": true,
-      "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "GitHub Actions majors are NOT dashboard-gated (last match wins): the dashboard is a channel nobody reads and a gated actions-major rots into forced-runtime warnings. SHA pins + the 7-day floor + CI on the PR are the guard.",
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["major"],
-      "dependencyDashboardApproval": false,
+      "description": "Majors get their own PR and a review label - the fork is cherry-pick territory, so a major on ssh2 or the MCP SDK is read against upstream before it moves. NOT dashboard-gated: issues are disabled on this repo, so there is no dashboard to approve it on (see the description above).",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major-review"
+      ],
       "minimumReleaseAge": "7 days"
     }
-  ]
+  ],
+  "dependencyDashboard": false,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false,
+    "minimumReleaseAge": "7 days",
+    "internalChecksFilter": "none"
+  }
 }
