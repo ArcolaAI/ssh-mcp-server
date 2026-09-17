@@ -17,10 +17,10 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.js",
+    "test:unit": "node --test test/*.test.js",
     "test:watch": "node --test --watch test/**/*.test.js",
-    "build": "node scripts/build.js",
-    "prepublishOnly": "npm run build",
-    "test:unit": "node --test test/*.test.js"
+    "compile": "node scripts/build.js",
+    "prepublishOnly": "npm run compile"
   },
   "keywords": [
     "ssh",
