@@ -394,7 +394,9 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "shellCommandTimeoutMs": 45000,
     "connectionTimeoutMs": 30000,
     "keepaliveIntervalMs": 10000,
-    "keepaliveCountMax": 3
+    "keepaliveCountMax": 3,
+    "hostKeyVerification": "known_hosts",
+    "knownHostsFile": "~/.ssh/known_hosts"
   },
   {
     "name": "prod",
@@ -595,6 +597,8 @@ Options:
   --shell-ready-timeout   Shell readiness probe timeout in milliseconds (default: 10000)
   --command-template  Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
   --pty               Allocate pseudo-tty for command execution (default: true)
+  --host-key-verification  Host-key verification: known_hosts (default, fail-closed) or off
+  --known-hosts-file  OpenSSH known_hosts file to verify against (default: ~/.ssh/known_hosts)
   --pre-connect       Pre-connect to all configured SSH servers on startup
   --version, -v       Print package version
   --help              Print this help message
@@ -609,6 +613,7 @@ This server provides powerful capabilities to execute commands and transfer file
 - **Denial of Service (DoS)**: The server does not have built-in rate limiting. An attacker could potentially launch a DoS attack by flooding the server with connection requests or large file transfers. It is recommended to run the server behind a firewall or reverse proxy with rate-limiting capabilities.
 - **Path Traversal**: The server has built-in protection against path traversal attacks on the local filesystem. However, it is still important to be mindful of the paths used in `upload` and `download` commands.
 - **Local Transfer Scope**: By default, local file transfers are restricted to the current working directory. Use `--allowed-local-paths` or `allowedLocalPaths` in config only for explicitly trusted directories.
+- **Host-Key Verification (on by default, fail-closed)**: every connection checks the host key the server offers against the OpenSSH `known_hosts` file (`~/.ssh/known_hosts`, or `knownHostsFile` / `--known-hosts-file`). The underlying `ssh2` library verifies nothing on its own, so without this an on-path attacker could impersonate a server and receive every command and uploaded file. A host with no entry, a key that does not match, a key marked `@revoked`, or an unreadable file all REFUSE the connection with an error naming the host and the file (`HOST_KEY_UNVERIFIABLE` before any socket opens, `HOST_KEY_REJECTED` during key exchange). The server never adds entries itself: connect once with the OpenSSH client (`ssh -p <port> <user>@<host>`), check the fingerprint, and accept it there. Hashed hostnames, `[host]:port` entries, wildcards and `!` negation are supported; `@cert-authority` entries are ignored (certificate host keys are not verified). Host-key algorithms offered to the server are restricted to the key types `known_hosts` holds for that host unless `algorithms.serverHostKey` is set explicitly. Set `hostKeyVerification: "off"` (or `--host-key-verification off`) only for a host you deliberately do not want checked; the server logs a warning on every such connection.
 - **Remote Transfer Scope**: SFTP upload/download accepts only absolute POSIX paths. If `allowedRemotePaths` (or `--allowed-remote-paths`) is not configured, any remote path is accepted and the server prints a startup warning. Configure `allowedRemotePaths` to whitelist a small set of remote directories; this is strongly recommended to prevent prompt-injection-driven reads or writes of files like `~/.ssh/authorized_keys` or `/etc/sshd_config`.
 
 ## 🌟 Star History

@@ -8,6 +8,12 @@ import {
 import { Logger } from "../utils/logger.js";
 import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
+import {
+  findHostEntries,
+  loadKnownHosts,
+  serverHostKeyAlgorithmsFor,
+  verifyOfferedKey,
+} from "../utils/known-hosts.js";
 import fs from "fs";
 import path from "path";
 import type { Duplex } from "node:stream";
@@ -199,6 +205,8 @@ export class SSHConnectionManager {
   private connected: Map<string, boolean> = new Map();
   private statusCache: Map<string, ServerStatus> = new Map();
   private pendingConnections: Map<string, Promise<void>> = new Map();
+  /** Host-key verification failures, by connection key - read when ssh2 emits the generic "Host denied" error. */
+  private hostKeyRejections: Map<string, string> = new Map();
   private pendingStatusCollections: Map<string, NodeJS.Timeout> = new Map();
   private commandWhitelistRegexes: Map<string, RegExp[]> = new Map();
   private commandBlacklistRegexes: Map<string, RegExp[]> = new Map();
@@ -394,6 +402,18 @@ export class SSHConnectionManager {
         this.connected.set(key, false);
         if (this.clients.get(key) === client || this.shellStreams.has(key)) {
           this.invalidateConnection(key);
+        }
+        const hostKeyRejection = this.hostKeyRejections.get(key);
+        if (hostKeyRejection) {
+          this.hostKeyRejections.delete(key);
+          rejectOnce(
+            new ToolError(
+              "HOST_KEY_REJECTED",
+              `SSH connection [${key}] refused: ${hostKeyRejection}`,
+              false,
+            ),
+          );
+          return;
         }
         rejectOnce(
           new ToolError(
@@ -1231,6 +1251,78 @@ export class SSHConnectionManager {
     }
   }
 
+  /**
+   * Host-key verification against OpenSSH known_hosts (fail-closed).
+   *
+   * ssh2 verifies nothing unless a `hostVerifier` is supplied, so this is the
+   * only thing standing between the MCP and a host impersonated on-path. The
+   * entries for the host are resolved BEFORE the socket opens so an unknown
+   * host, or an unreadable known_hosts file, refuses without ever touching
+   * the network; the verifier then compares the offered wire key against
+   * those entries during key exchange. `hostKeyVerification: "off"` is the
+   * only way to skip it, and it must be set explicitly.
+   */
+  private applyHostKeyVerification(
+    key: string,
+    config: SSHConfig,
+    sshConfig: Record<string, unknown>,
+  ): void {
+    if (config.hostKeyVerification === "off") {
+      Logger.log(
+        `[${key}] Host-key verification is OFF by configuration - the host key of ${config.host}:${config.port} will not be checked`,
+        "error",
+      );
+      return;
+    }
+
+    let loaded;
+    try {
+      loaded = loadKnownHosts(config.knownHostsFile);
+    } catch (error) {
+      throw new ToolError(
+        "HOST_KEY_UNVERIFIABLE",
+        `SSH connection [${key}] refused: cannot read known_hosts (${(error as Error).message}). Host-key verification is fail-closed; connect once with the OpenSSH client (ssh ${config.username}@${config.host}) to record the host key, or set hostKeyVerification to "off" to accept any host key.`,
+        false,
+      );
+    }
+
+    const hostEntries = findHostEntries(loaded.entries, config.host, config.port);
+    if (hostEntries.filter((e) => e.marker !== "cert-authority").length === 0) {
+      throw new ToolError(
+        "HOST_KEY_UNVERIFIABLE",
+        `SSH connection [${key}] refused: ${config.host}:${config.port} has no entry in ${loaded.path}. Host-key verification is fail-closed; connect once with the OpenSSH client (ssh -p ${config.port} ${config.username}@${config.host}), check the fingerprint it shows, and accept it there - this tool never adds host keys itself.`,
+        false,
+      );
+    }
+
+    const existingAlgorithms =
+      (sshConfig.algorithms as Record<string, unknown> | undefined) ?? {};
+    if (existingAlgorithms.serverHostKey === undefined) {
+      const restricted = serverHostKeyAlgorithmsFor(hostEntries);
+      if (restricted.length > 0) {
+        sshConfig.algorithms = {
+          ...existingAlgorithms,
+          serverHostKey: restricted,
+        };
+      }
+    }
+
+    sshConfig.hostVerifier = (offeredKey: Buffer): boolean => {
+      const verdict = verifyOfferedKey(hostEntries, offeredKey);
+      if (verdict.ok) {
+        Logger.log(
+          `[${key}] Host key verified: ${verdict.keyType} matches ${loaded.path} line ${verdict.lineNumber}`,
+          "info",
+        );
+        return true;
+      }
+      const message = `host key for ${config.host}:${config.port} REJECTED (${verdict.reason}): ${verdict.detail}. Checked against ${loaded.path}. Refusing to connect.`;
+      Logger.log(`[${key}] ${message}`, "error");
+      this.hostKeyRejections.set(key, message);
+      return false;
+    };
+  }
+
   private async buildClientConfig(
     key: string,
     config: SSHConfig,
@@ -1249,6 +1341,8 @@ export class SSHConnectionManager {
     if (config.algorithms) {
       sshConfig.algorithms = config.algorithms;
     }
+
+    this.applyHostKeyVerification(key, config, sshConfig);
 
     if (config.proxy && config.socksProxy) {
       throw new ToolError(

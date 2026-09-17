@@ -206,6 +206,8 @@ function createPasswordConfig(overrides = {}) {
     port: 22,
     username: 'devuser',
     password: 'devpass',
+    // The fake client never offers a host key; verification is exercised by its own describe block below.
+    hostKeyVerification: 'off',
     ...overrides,
   };
 }

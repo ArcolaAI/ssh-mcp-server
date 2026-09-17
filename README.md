@@ -615,6 +615,7 @@ npx @fangjunjie/ssh-mcp-server \
 - **拒绝服务攻击 (DoS)**：服务器没有内置的速率限制。攻击者可能通过向服务器发送大量连接请求或大文件传输来发起 DoS 攻击。建议在具有速率限制功能的防火墙或反向代理后面运行服务器。
 - **路径遍历**：服务器内置了对本地文件系统路径遍历攻击的保护。但是，仍然需要注意在 `upload` 和 `download` 命令中使用的路径。
 - **本地传输范围**：默认仅允许访问当前工作目录。只有在明确可信时，才建议通过 `--allowed-local-paths` 或配置文件中的 `allowedLocalPaths` 放宽范围。
+- **主机密钥校验（默认开启，失败即拒绝）**：每次连接都会将服务器提供的主机密钥与 OpenSSH `known_hosts`（默认 `~/.ssh/known_hosts`，可用 `knownHostsFile` / `--known-hosts-file` 指定）比对。`ssh2` 本身不做任何校验，未知主机、密钥不匹配、`@revoked` 或文件不可读都会拒绝连接（`HOST_KEY_UNVERIFIABLE` / `HOST_KEY_REJECTED`）。本工具不会自行写入 `known_hosts`，请先用 OpenSSH 客户端连接一次并确认指纹。仅在确有需要时设置 `hostKeyVerification: "off"`（或 `--host-key-verification off`）关闭。详见 README_EN.md。
 - **远端传输范围**：SFTP upload/download 仅接受绝对 POSIX 路径。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
 
 ## 🌟 Star 历史
