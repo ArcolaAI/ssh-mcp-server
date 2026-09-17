@@ -67,6 +67,7 @@ function createTempConfig() {
       username: 'test',
       password: 'test',
       commandWhitelist: ['^echo'],
+      hostKeyVerification: 'off',
     },
   }));
 
@@ -85,6 +86,7 @@ function createPreConnectConfig(port) {
       password: 'test',
       connectionTimeoutMs: 10000,
       commandWhitelist: ['^echo'],
+      hostKeyVerification: 'off',
     },
   }));
 

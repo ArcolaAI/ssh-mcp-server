@@ -31,6 +31,8 @@ export interface SSHConfig {
   keepaliveIntervalMs?: number; // SSH keepalive interval, default: 10000ms
   keepaliveCountMax?: number; // Unanswered keepalive packets before disconnect, default: 3
   commandTemplate?: string; // Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
+  hostKeyVerification?: "known_hosts" | "off"; // Host-key verification mode. "known_hosts" (default) checks the offered host key against knownHostsFile and refuses on unknown host, mismatch or @revoked; "off" accepts any host key (ssh2 default). Must be set explicitly to disable
+  knownHostsFile?: string; // Path to the OpenSSH known_hosts file, default: ~/.ssh/known_hosts
 }
 
 /**

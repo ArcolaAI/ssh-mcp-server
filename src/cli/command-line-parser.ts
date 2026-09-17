@@ -31,6 +31,28 @@ export class CommandLineParser {
     return Boolean(value);
   }
 
+  /**
+   * Parse host-key verification mode. Only the literal "off" disables it -
+   * anything else (including absent) is the fail-closed default.
+   */
+  private static parseHostKeyVerification(
+    value: unknown,
+  ): "known_hosts" | "off" {
+    if (value === undefined || value === null || value === "") {
+      return "known_hosts";
+    }
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === "off") {
+      return "off";
+    }
+    if (normalized === "known_hosts" || normalized === "known-hosts") {
+      return "known_hosts";
+    }
+    throw new Error(
+      `hostKeyVerification must be "known_hosts" or "off", got: ${String(value)}`,
+    );
+  }
+
   private static parseTransportMode(
     value: unknown,
   ): SSHConfig["transportMode"] | undefined {
@@ -110,6 +132,8 @@ export class CommandLineParser {
         "command-template": { type: "string" },
         pty: { type: "string" },
         "try-keyboard": { type: "boolean" },
+        "host-key-verification": { type: "string" },
+        "known-hosts-file": { type: "string" },
         "pre-connect": { type: "boolean" },
       },
       allowPositionals: true,
@@ -229,6 +253,8 @@ export class CommandLineParser {
       const commandTemplate = values["command-template"];
       const pty = this.parseBoolean(values.pty);
       const tryKeyboard = values["try-keyboard"];
+      const hostKeyVerification = values["host-key-verification"];
+      const knownHostsFile = values["known-hosts-file"];
 
       // 实际连接地址：优先使用 SSH config 的 HostName
       const actualHost = sshConfigEntry?.hostName || host;
@@ -258,6 +284,8 @@ export class CommandLineParser {
         pty,
         tryKeyboard: tryKeyboard !== undefined ? tryKeyboard : undefined,
         transportMode: values["transport-mode"],
+        hostKeyVerification,
+        knownHostsFile,
         shellReadyTimeoutMs: values["shell-ready-timeout"],
         commandTemplate,
         commandWhitelist: whitelist
@@ -348,6 +376,13 @@ export class CommandLineParser {
       passphrase: config.passphrase || process.env.SSH_MCP_PASSPHRASE,
       agent: config.agent,
       algorithms: config.algorithms,
+      hostKeyVerification: this.parseHostKeyVerification(
+        config.hostKeyVerification,
+      ),
+      knownHostsFile:
+        typeof config.knownHostsFile === "string" && config.knownHostsFile.length > 0
+          ? this.normalizeLocalPath(config.knownHostsFile)
+          : undefined,
       proxy: config.proxy,
       socksProxy: config.socksProxy,
       pty: this.parseBoolean(config.pty),
