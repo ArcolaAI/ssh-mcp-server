@@ -1,25 +1,26 @@
 {
   "name": "@fangjunjie/ssh-mcp-server",
-  "version": "1.9.2",
+  "version": "1.9.2-arcolaai.1",
   "description": "SSH-based MCP Server (基于 SSH 的 MCP 服务器)",
   "main": "build/index.js",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/classfang/ssh-mcp-server.git"
+    "url": "git+https://github.com/ArcolaAI/ssh-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/classfang/ssh-mcp-server/issues"
+    "url": "https://github.com/ArcolaAI/ssh-mcp-server/issues"
   },
-  "homepage": "https://github.com/classfang/ssh-mcp-server#readme",
+  "homepage": "https://github.com/ArcolaAI/ssh-mcp-server#readme",
   "bin": {
     "ssh-mcp-server": "build/index.js"
   },
   "scripts": {
     "test": "node scripts/run-tests.js",
+    "test:unit": "node --test test/*.test.js",
     "test:watch": "node --test --watch test/**/*.test.js",
-    "build": "node scripts/build.js",
-    "prepublishOnly": "npm run build"
+    "compile": "node scripts/build.js",
+    "prepublishOnly": "npm run compile"
   },
   "keywords": [
     "ssh",

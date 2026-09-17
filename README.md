@@ -18,6 +18,10 @@
 
 </div>
 
+## ArcolaAI fork
+
+Arcola estate fork of upstream `v1.9.2` - see the "ArcolaAI fork" section of README_EN.md for what is changed and how it is installed.
+
 ## 📝 项目介绍
 
 ssh-mcp-server 是一个桥接工具，可以让 AI 助手等支持 MCP 协议的应用通过标准化接口执行远程 SSH 命令。这使得 AI 助手能够安全地操作远程服务器，执行命令并获取结果，而无需直接暴露 SSH 凭据给 AI 模型。

@@ -1,0 +1,5 @@
+# LF everywhere, on every checkout. build/ is committed and must equal a fresh
+# compile of src/ byte for byte; a CRLF checkout of src/ would put CR bytes into
+# template literals and break that equality (measured 2026-09-17).
+* text=auto eol=lf
+*.png binary
