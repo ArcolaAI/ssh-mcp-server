@@ -9,7 +9,23 @@
   ],
   "enabledManagers": [
     "npm",
-    "github-actions"
+    "github-actions",
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The Renovate image pin in .github/workflows/renovate-config-validate.yml. This fork has no renovate.yml of its own (the run that serves it is in arcola-ai-platform), so the validator states its pin and this manager keeps it current, as the renovate-version managers do in the other estate repos (ISMS-DOC-053 s8.1). custom.regex is in enabledManagers for this reason.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/renovate-config-validate\\.yml$/"
+      ],
+      "matchStrings": [
+        "RENOVATE_VERSION:\\s*'(?<currentValue>[^']+)'"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/renovatebot/renovate",
+      "versioningTemplate": "docker"
+    }
   ],
   "minimumReleaseAge": "7 days",
   "automerge": false,

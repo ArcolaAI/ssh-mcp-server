@@ -1,0 +1,124 @@
+# Validate renovate.json - the one config no other CI signal reads.
+#
+# WHY THIS EXISTS
+#   An invalid `renovate.json` makes Renovate DECLINE THE REPOSITORY while every
+#   other CI signal stays green, because nothing in CI reads that file. This fork
+#   is served by the self-hosted Renovate run in ArcolaAI/arcola-ai-platform (its
+#   config.js `repositories` list), so a bad edit here would make Renovate skip the
+#   fork silently while platform's run stayed green (aai-core BACKLOG, 2026-09-24;
+#   ISMS-DOC-053 s1, s2.2 rule 5). Ported 2026-09-27 from the proven shape in
+#   ArcolaTheatre2026/bar-finance, itself a port of arcola-mana and platform.
+#
+# THE VERSION IS PINNED HERE, AND THAT IS CORRECT FOR THIS REPO
+#   Elsewhere the validator reads the one pin out of the repo's own renovate.yml so
+#   two pins cannot drift. This fork has no renovate.yml - the run that serves it
+#   lives in platform - so there is nothing to read, and a stated pin is the honest
+#   shape. It is kept current by the `RENOVATE_VERSION` customManager in
+#   renovate.json, the same way the other repos keep theirs.
+#
+# IT CARRIES ITS OWN NEGATIVE CONTROL
+#   The job asserts BOTH directions every run, control FIRST: a committed invalid
+#   fixture must be REJECTED and the rejection must NAME the fixture's own defect
+#   (a validator that dies on startup also "rejects" it), then renovate.json must
+#   validate. It cannot pass vacuously, including on its first run.
+name: Renovate config
+
+on:
+  pull_request:
+    paths:
+      - 'renovate.json'
+      - '.github/workflows/renovate-config-validate.yml'
+      - 'scripts/test/fixtures/renovate-invalid.json'
+  push:
+    branches: [main]
+    paths:
+      - 'renovate.json'
+
+permissions:
+  contents: read
+
+# Updated by the RENOVATE_VERSION customManager in renovate.json.
+env:
+  RENOVATE_VERSION: '43.288.0-full'
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the pinned Renovate version
+        id: ver
+        run: |
+          set -euo pipefail
+          # A missing pin is FATAL rather than a default: defaulting to a floating
+          # tag is precisely the unpinned fetch this job exists to avoid.
+          if [ -z "${RENOVATE_VERSION:-}" ]; then
+            echo "::error::RENOVATE_VERSION is not set in this workflow - refusing to guess a version"
+            exit 1
+          fi
+          echo "version=$RENOVATE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "pinned Renovate version: $RENOVATE_VERSION"
+
+      - name: The real config must validate, and an invalid one must be REJECTED
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          set -uo pipefail
+          IMAGE="renovate/renovate:${VER}"
+          # The working directory is /tmp, NOT the repo. renovate-config-validator
+          # runs Renovate's GLOBAL config discovery before it validates the file
+          # it was handed, and that discovery loads `config.js` from the working
+          # directory. This fork has no root config.js today, but on
+          # arcola-ai-platform that discovery killed the validator outright (a
+          # CommonJS config.js loaded as ESM, run 35809861107) and blamed
+          # renovate.json for it. Validating from an empty directory leaves
+          # discovery nothing to find, so each arm's verdict is about the file
+          # named on the command line and nothing else.
+          run_validator() {
+            docker run --rm -v "$PWD:/repo:ro" -w /tmp "$IMAGE" \
+              renovate-config-validator "/repo/$1"
+          }
+
+          # ARM 1 IS THE INSTRUMENT CHECK, AND IT RUNS FIRST ON PURPOSE. A
+          # validator that cannot run rejects every file it is given, including a
+          # valid one - so asking about renovate.json first turns a broken
+          # instrument into a false accusation against the config. Prove the
+          # instrument can tell bad from good, then make claims with it.
+          echo "== arm 1 (instrument check): the invalid fixture must be REJECTED, FOR ITS OWN DEFECT"
+          FIXTURE=scripts/test/fixtures/renovate-invalid.json
+          # `|| rc=$?`, never `; rc=$?`. GitHub runs this step as `bash -e {0}`,
+          # so errexit is ALREADY on and a bare assignment from a failing command
+          # kills the step at that line - before the rejection can be examined,
+          # which is the whole point of the arm. The left side of `||` is exempt.
+          rc=0
+          out="$(run_validator "$FIXTURE" 2>&1)" || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::the validator ACCEPTED $FIXTURE. That fixture carries an unknown option and a matchManagers string where a list is required, so accepting it means this job is no longer validating anything - treat any pass below as meaningless until this is fixed."
+            exit 1
+          fi
+          # A non-zero exit is NOT enough: a validator that crashes on startup
+          # also "rejects" the fixture, and scoring that as caught is how a dead
+          # instrument audits as a working one. Require the output to name the
+          # fixture's OWN defect.
+          # A here-string, not `printf ... | grep -q`: a producer piping into an
+          # early-exiting grep is the SIGPIPE race the repo's grep-pipe-guard
+          # refuses (G-OPS-48), and it caught this line on the previous push.
+          if ! grep -qiE 'thisOptionDoesNotExist|matchManagers' <<<"$out"; then
+            echo "::error::$FIXTURE was rejected, but NOT for its own defect - the validator named neither thisOptionDoesNotExist nor matchManagers. That means the validator failed before it validated anything (a startup or environment fault, not a config fault), so this job can say nothing about renovate.json. Its output is above."
+            exit 1
+          fi
+          echo "  ok   the fixture was rejected for its own defect, so the validator is doing its job"
+
+          echo
+          echo "== arm 2: renovate.json must be VALID"
+          rc=0
+          out="$(run_validator renovate.json 2>&1)" || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::renovate.json is INVALID - Renovate would decline this repository while every other check stayed green. The validator's own output is above; arm 1 has already shown the validator works, so this is a fault in renovate.json."
+            exit 1
+          fi
+          echo "  ok   renovate.json validates"
