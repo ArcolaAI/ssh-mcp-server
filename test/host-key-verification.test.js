@@ -20,10 +20,20 @@ import {
 // Real keys, real wire blobs: what ssh2 hands to hostVerifier during KEX is
 // exactly the base64 payload of a known_hosts line, so the fixtures below are
 // byte-faithful to a live handshake.
+//
+// ssh2's generateKeyPairSync drops a leading zero byte from about 3 in 1000
+// ed25519 public keys (a 31-byte key, which its own parseKey then returns as
+// an Error, not throws). That is a fixture-generation defect, not the code
+// under test, so a malformed key is discarded and minted again, a bounded
+// number of times.
 function mintKey(type = 'ed25519') {
-  const pair = sshUtils.generateKeyPairSync(type, type === 'rsa' ? { bits: 2048 } : undefined);
-  const parsed = sshUtils.parseKey(pair.public);
-  return { type: parsed.type, blob: parsed.getPublicSSH(), b64: parsed.getPublicSSH().toString('base64') };
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const pair = sshUtils.generateKeyPairSync(type, type === 'rsa' ? { bits: 2048 } : undefined);
+    const parsed = sshUtils.parseKey(pair.public);
+    if (parsed instanceof Error) continue;
+    return { type: parsed.type, blob: parsed.getPublicSSH(), b64: parsed.getPublicSSH().toString('base64') };
+  }
+  throw new Error(`mintKey: ssh2 produced 20 unparseable ${type} keys in a row`);
 }
 
 function hashedHost(name) {
