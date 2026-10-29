@@ -125,6 +125,7 @@ export class CommandLineParser {
         blacklist: { type: "string", short: "B" },
         proxy: { type: "string" },
         socksProxy: { type: "string", short: "s" },
+        jump: { type: "string", short: "J" },
         "allowed-local-paths": { type: "string" },
         "allowed-remote-paths": { type: "string" },
         "transport-mode": { type: "string" },
@@ -281,6 +282,7 @@ export class CommandLineParser {
         agent: resolvedAgent,
         proxy: values.proxy,
         socksProxy: values.socksProxy,
+        jump: values.jump,
         pty,
         tryKeyboard: tryKeyboard !== undefined ? tryKeyboard : undefined,
         transportMode: values["transport-mode"],
@@ -385,6 +387,10 @@ export class CommandLineParser {
           : undefined,
       proxy: config.proxy,
       socksProxy: config.socksProxy,
+      jump:
+        typeof config.jump === "string" && config.jump.trim().length > 0
+          ? config.jump.trim()
+          : undefined,
       pty: this.parseBoolean(config.pty),
       tryKeyboard: this.parseBoolean(config.tryKeyboard),
       transportMode:
