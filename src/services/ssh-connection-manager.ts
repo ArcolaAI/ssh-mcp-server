@@ -8,6 +8,7 @@ import {
 import { Logger } from "../utils/logger.js";
 import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
+import { parseJumpSpec } from "../utils/jump-host.js";
 import {
   findHostEntries,
   loadKnownHosts,
@@ -1252,6 +1253,120 @@ export class SSHConnectionManager {
   }
 
   /**
+   * Open the target's transport through a jump host (one-hop ProxyJump).
+   *
+   * The jump connection is built by the same buildClientConfig as any other
+   * host, so its host key is verified against the same known_hosts
+   * (fail-closed) and it authenticates with the same credentials. The target
+   * is then reached over a direct-tcpip channel, and its own host key is
+   * still verified under its own address when the outer handshake runs.
+   *
+   * The jump client lives exactly as long as the forwarded channel: when the
+   * target connection ends or is destroyed the channel closes and the jump
+   * connection is ended with it.
+   */
+  private async createJumpSocket(
+    key: string,
+    config: SSHConfig,
+  ): Promise<Duplex> {
+    let jump;
+    try {
+      jump = parseJumpSpec(config.jump as string, config.username);
+    } catch (error) {
+      throw new ToolError(
+        "SSH_CONNECTION_FAILED",
+        `Jump host configuration for [${key}] is invalid: ${(error as Error).message}`,
+        false,
+      );
+    }
+
+    const jumpKey = `${key}#jump`;
+    const jumpConfig: SSHConfig = {
+      ...config,
+      name: jumpKey,
+      host: jump.host,
+      port: jump.port,
+      username: jump.username,
+      jump: undefined,
+    };
+    const jumpSshConfig = await this.buildClientConfig(jumpKey, jumpConfig);
+    const jumpClient = this.createClient();
+    const target = formatHostPort(config.host, config.port);
+    const via = formatHostPort(jump.host, jump.port);
+
+    return new Promise<Duplex>((resolve, reject) => {
+      let settled = false;
+      const fail = (error: ToolError) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        try {
+          jumpClient.end();
+        } catch {
+          // Ignore cleanup errors on a failed jump.
+        }
+        reject(error);
+      };
+
+      jumpClient.on("error", (err: Error) => {
+        const hostKeyRejection = this.hostKeyRejections.get(jumpKey);
+        if (hostKeyRejection) {
+          this.hostKeyRejections.delete(jumpKey);
+          fail(
+            new ToolError(
+              "HOST_KEY_REJECTED",
+              `SSH connection [${key}] refused at jump host ${via}: ${hostKeyRejection}`,
+              false,
+            ),
+          );
+          return;
+        }
+        fail(
+          new ToolError(
+            "SSH_CONNECTION_FAILED",
+            `SSH connection [${key}] failed at jump host ${via}: ${err.message}`,
+            true,
+          ),
+        );
+      });
+
+      jumpClient.once("ready", () => {
+        Logger.log(`[${key}] Jump host ${via} ready, forwarding to ${target}`, "info");
+        jumpClient.forwardOut(
+          "127.0.0.1",
+          0,
+          config.host,
+          config.port,
+          (err: Error | undefined, stream: ClientChannel) => {
+            if (err) {
+              fail(
+                new ToolError(
+                  "SSH_CONNECTION_FAILED",
+                  `SSH connection [${key}] refused: jump host ${via} would not forward to ${target} (${err.message})`,
+                  true,
+                ),
+              );
+              return;
+            }
+            settled = true;
+            stream.once("close", () => {
+              try {
+                jumpClient.end();
+              } catch {
+                // Ignore cleanup errors when the forwarded channel closes.
+              }
+            });
+            resolve(stream);
+          },
+        );
+      });
+
+      jumpClient.connect(jumpSshConfig);
+    });
+  }
+
+  /**
    * Host-key verification against OpenSSH known_hosts (fail-closed).
    *
    * ssh2 verifies nothing unless a `hostVerifier` is supplied, so this is the
@@ -1353,7 +1468,11 @@ export class SSHConnectionManager {
     }
 
     const proxyValue = config.proxy || config.socksProxy;
-    if (proxyValue) {
+    if (config.jump) {
+      // The jump hop carries any configured proxy; this hop rides the
+      // forwarded channel, so it opens no socket of its own.
+      sshConfig.sock = await this.createJumpSocket(key, config);
+    } else if (proxyValue) {
       try {
         const proxyUrl = new URL(proxyValue);
         if (

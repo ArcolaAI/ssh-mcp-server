@@ -17,6 +17,7 @@ export interface SSHConfig {
   commandBlacklist?: string[]; // Command blacklist (array of regex strings)
   proxy?: string; // Proxy URL supporting SOCKS5, HTTP, and HTTPS
   socksProxy?: string; // Legacy SOCKS5-only proxy URL
+  jump?: string; // Jump host "[user@]host[:port]" (OpenSSH ProxyJump, one hop). The target is reached through a direct-tcpip channel opened on the jump host; the jump host's own key is verified against the same known_hosts, fail-closed. A proxy, if set, applies to the jump hop
   algorithms?: Algorithms; // Custom SSH algorithms (kex, cipher, serverHostKey, hmac, compress)
   pty?: boolean; // Allocate pseudo-tty for command execution, default: true
   allowedLocalPaths?: string[]; // Allowed local paths for upload/download

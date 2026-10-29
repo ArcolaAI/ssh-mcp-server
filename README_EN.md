@@ -24,8 +24,8 @@ This repository is the Arcola estate's fork of [classfang/ssh-mcp-server](https:
 
 - **Versioning:** `<upstream>-arcolaai.<n>`; the package name is unchanged so the installed bin stays `ssh-mcp-server`.
 - **`build/` is committed.** The estate installs from git with npm scripts disabled, so nothing compiles at install time. `.github/workflows/build-matches-source.yml` recompiles `src/` on every push and pull request and fails if the committed `build/` differs; rebuild with `npm run compile` (= `npx tsc`) and commit the result whenever `src/` changes. The script is named `compile`, not `build`, on purpose: npm's git fetcher treats a `build` script as a reason to run a nested `npm install` at install time, which the estate's `min-release-age` floor refuses. `.gitattributes` forces LF so a Windows checkout compiles byte-identically.
-- **Tests:** `node --test test/*.test.js` (or `npm test`, which builds first). 179 pass, 2 skipped, at the source switch.
-- **Patches carried:** host-key verification against OpenSSH `known_hosts`, on by default and fail-closed (`#1`); this fork's packaging (`#2`).
+- **Tests:** `node --test test/*.test.js` (or `npm test`, which builds first). 179 pass, 2 skipped, at the source switch; 188 pass with the jump host (`-arcolaai.2`).
+- **Patches carried:** host-key verification against OpenSSH `known_hosts`, on by default and fail-closed (`#1`); this fork's packaging (`#2`); a one-hop jump host, `jump` (section 5a), with both host keys verified.
 - **Upstream releases** surface as a Renovate pull request in `arcola-ai-platform` (the registry version is watched there); cherry-pick onto this fork, rebuild, bump `-arcolaai.<n>`, and re-pin the commit SHA in `workstation/package.json`.
 
 ## 📝 Project Overview
@@ -222,6 +222,20 @@ https://username:password@proxy-host:8443
 HTTP and HTTPS proxies use the `CONNECT` method to tunnel to the SSH server, with optional Basic proxy authentication. HTTP and HTTPS default to ports `80` and `443`; SOCKS5 requires an explicit port. HTTPS proxy certificates are verified using the default Node.js trust store.
 
 The existing `socksProxy` configuration and `--socksProxy` option remain supported for backward compatibility, but only accept `socks://` and `socks5://`. Do not configure both `proxy` and `socksProxy`.
+
+### 5a. Through a Jump Host (`jump`, one-hop ProxyJump)
+
+`jump` (`-J` / `--jump`) reaches the target through one SSH jump host, as OpenSSH `ProxyJump` does: the server connects to the jump host, asks it for a direct-tcpip channel to `host:port`, and runs the target's SSH session inside that channel.
+
+```json
+{ "name": "pii", "host": "10.0.1.6", "port": 22, "username": "deploy", "privateKey": "~/.ssh/id_ed25519", "jump": "deploy@157.90.229.39" }
+```
+
+- Form: `[user@]host[:port]`, `[addr]:port` for IPv6. The user defaults to the target's `username`, the port to 22. A chain (`a,b`) is refused.
+- **Both host keys are verified, fail-closed**, against the same `knownHostsFile`: the jump host under its own address, the target under `host:port` as given (a private address needs its own `known_hosts` line). A refusal at the jump host says so (`... at jump host <addr>`).
+- The jump hop authenticates with the same key, agent or password as the target. A configured `proxy` applies to the jump hop.
+- A target the jump host will not forward to (sshd `PermitOpen`) fails as `jump host <addr> would not forward to <target>`.
+- The jump connection is ended when the target connection closes.
 
 ### 6. 📝 Restricting Commands With Whitelist / Blacklist
 

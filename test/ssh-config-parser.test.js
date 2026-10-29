@@ -193,13 +193,19 @@ describe('SSH Config Parser', () => {
   describe('边界情况', () => {
     it('默认配置文件不存在时应返回 null', () => {
       const fakeHome = fs.mkdtempSync(path.join(fixturesDir, 'fake-home-'));
+      // os.homedir() reads USERPROFILE on Windows, not HOME: fake both, or the
+      // test finds the real ~/.ssh/config of whoever runs it there.
+      const originalUserProfile = process.env.USERPROFILE;
       process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
 
       try {
         const config = lookupSshConfig('any-host');
         assert.strictEqual(config, null);
       } finally {
         process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
         fs.rmSync(fakeHome, { recursive: true, force: true });
       }
     });

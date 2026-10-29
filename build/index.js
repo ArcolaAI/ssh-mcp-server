@@ -19,6 +19,7 @@ Options:
   -B, --blacklist <patterns>       Command blacklist regexes, comma-separated
   --proxy <url>                    Proxy URL (SOCKS5, HTTP, or HTTPS)
   -s, --socksProxy <url>           Legacy SOCKS5 proxy URL
+  -J, --jump <[user@]host[:port]>  Reach the host through one jump host (ProxyJump); its key is checked too
   --allowed-local-paths <paths>    Extra allowed local paths, comma-separated
   --allowed-remote-paths <paths>   Allowed remote POSIX absolute paths, comma-separated
   --transport-mode <mode>          SSH transport mode: exec or shell (default: exec)
