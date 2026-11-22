@@ -214,7 +214,7 @@ describe('SSHConnectionManager host-key verification (fail-closed)', () => {
     await assert.rejects(manager.connect('node'), (err) => {
       assert.strictEqual(err.code, 'HOST_KEY_REJECTED');
       assert.match(err.message, /REJECTED \(mismatch\)/);
-      assert.match(err.message, new RegExp(HOST.replace(/\./g, '\\.')));
+      assert.match(err.message, new RegExp(HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
       return true;
     });
     assert.strictEqual(client.verifierCalls, 1);
