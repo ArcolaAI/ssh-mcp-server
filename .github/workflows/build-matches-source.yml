@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build-matches-source:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: "true"
     steps:
